@@ -20,8 +20,11 @@ local function create_bonus_tracker()
         smithing = 2,
         goldsmithing = 3,
         clothcraft = 4,
+        clothcrafting = 4,
         leathercraft = 5,
+        leathercrafting = 5,
         bonecraft = 6,
+        bonecrafting = 6,
         alchemy = 7,
         cooking = 8,
     }
@@ -53,7 +56,8 @@ local function create_bonus_tracker()
     tracker.gear_bonus_total = 0
     tracker.gear_bonus_by_skill = {}
 
-    local support_tier_override = nil  -- set from chat message when buff ID alone can't encode tier
+    local support_tier_override = nil   -- set from chat message when buff ID alone can't encode tier
+    local support_skill_override = nil  -- set from chat message when buff ID maps wrong skill on private servers
 
     local last_bonus_scan = 0
     local bonus_scan_interval = 1.0
@@ -197,26 +201,57 @@ local function create_bonus_tracker()
 
     local function apply_name_based_bonus_fallback(bonus_map, item_name)
         local name_lc = trim_text(tostring(item_name or '')):lower()
+        name_lc = name_lc:gsub("’", "'")
+        -- Normalize odd chat/resource typography (soft hyphen, zero-width marks, etc.).
+        name_lc = name_lc:gsub('[\128-\255]', '')
+        name_lc = name_lc:gsub('[-_]', ' '):gsub('%s+', ' '):gsub('^%s*(.-)%s*$', '%1')
         if name_lc == '' then
             return 0
+        end
+
+        -- Some guild glasses names do not carry the craft in the item name.
+        local explicit_name_to_skill = {
+            ['protective spectacles'] = 6,
+            ['shaded spectacles'] = 3,
+            ["chef's hat"] = 8,
+        }
+        local explicit_skill = explicit_name_to_skill[name_lc]
+        if explicit_skill ~= nil then
+            bonus_map[explicit_skill] = (bonus_map[explicit_skill] or 0) + 1
+            return 1
         end
 
         local is_guild_gear = name_lc:find('apron', 1, true)
             or name_lc:find('gloves', 1, true)
             or name_lc:find('mitts', 1, true)
+            or name_lc:find('glasses', 1, true)
+            or name_lc:find('spectacles', 1, true)
+            or name_lc:find('smock', 1, true)
+            or name_lc:find('hat', 1, true)
+            or name_lc:find('toque', 1, true)
         if not is_guild_gear then
             return 0
         end
 
         local guild_to_skill = {
             ["carpenter's"] = 1,
+            ["woodworking"] = 1,
             ["blacksmith's"] = 2,
+            ["smithy's"] = 2,
+            ["smithing"] = 2,
             ["goldsmith's"] = 3,
+            ["goldsmithing"] = 3,
             ["weaver's"] = 4,
+            ["clothcraft"] = 4,
             ["tanner's"] = 5,
+            ["leathercraft"] = 5,
             ["boneworker's"] = 6,
+            ["bonecraft"] = 6,
             ["alchemist's"] = 7,
+            ["alchemy"] = 7,
             ["culinarian's"] = 8,
+            ["chef's"] = 8,
+            ["cooking"] = 8,
         }
 
         for guild_name, craft_id in pairs(guild_to_skill) do
@@ -232,10 +267,12 @@ local function create_bonus_tracker()
     local function apply_synthesis_support_bonus_from_buffs(bonus_map, buffs)
         local active_skill_id = 0
         local highest_tier_bonus = 0
+        local has_support_buff = false
 
         for _, buff_id in pairs(buffs or {}) do
             local mapped_skill = imagery_skill_by_buff[buff_id]
             if mapped_skill ~= nil then
+                has_support_buff = true
                 active_skill_id = mapped_skill
             end
 
@@ -245,6 +282,14 @@ local function create_bonus_tracker()
             end
         end
 
+        if not has_support_buff then
+            return 0, 0
+        end
+
+        -- On Horizon-like servers the status ID can be ambiguous; prefer skill parsed from chat.
+        if support_skill_override ~= nil and support_skill_override > 0 then
+            active_skill_id = support_skill_override
+        end
         if active_skill_id == 0 then
             return 0, 0
         end
@@ -451,6 +496,11 @@ local function create_bonus_tracker()
     -- Maps the phrasing to a numeric bonus so the UI displays the correct tier.
     function tracker.set_support_tier_from_message(msg)
         local m = tostring(msg or ''):lower()
+        local skill_name = m:match('your%s+([%a%s]+)%s+skills%s+went%s+up')
+        if skill_name ~= nil then
+            local normalized = trim_text(skill_name):gsub('%s+', ' ')
+            support_skill_override = skill_name_to_id[normalized]
+        end
         if m:find('a little', 1, true) then
             support_tier_override = 3
         else

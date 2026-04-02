@@ -11,13 +11,18 @@ local function create_craft_history_store(addon_info, json)
         end
     end
 
-    local crafts_dir = string.format('%s\\crafts', base_path)
-    local history_file = string.format('%s\\craft_history.json', crafts_dir)
+    local addon_name = (addon_info and type(addon_info.name) == 'string' and #addon_info.name > 0) and addon_info.name or 'craftstats'
+    local config_dir = string.format('%s\\..\\..\\config\\addons\\%s', base_path, addon_name)
+    local history_file = string.format('%s\\craft_history.json', config_dir)
+
+    -- Legacy path: previously stored inside the addon's crafts subfolder.
+    local legacy_history_file = string.format('%s\\crafts\\craft_history.json', base_path)
+
     local store = {}
 
-    local function ensure_crafts_dir()
+    local function ensure_config_dir()
         pcall(function()
-            os.execute(('mkdir "%s" >nul 2>nul'):format(crafts_dir))
+            os.execute(('mkdir "%s" >nul 2>nul'):format(config_dir))
         end)
     end
 
@@ -25,16 +30,29 @@ local function create_craft_history_store(addon_info, json)
         return { entries = {} }
     end
 
-    function store.load()
-        local file = io.open(history_file, 'r')
-        if file then
-            local content = file:read('*a')
-            file:close()
+    local function load_file(path)
+        local file = io.open(path, 'r')
+        if not file then return nil end
+        local content = file:read('*a')
+        file:close()
+        local ok, loaded = pcall(json.decode, content)
+        if ok and type(loaded) == 'table' and type(loaded.entries) == 'table' then
+            return loaded
+        end
+        return nil
+    end
 
-            local ok, loaded = pcall(json.decode, content)
-            if ok and type(loaded) == 'table' and type(loaded.entries) == 'table' then
-                return loaded
-            end
+    function store.load()
+        local current = load_file(history_file)
+        if current ~= nil then
+            return current
+        end
+
+        local legacy = load_file(legacy_history_file)
+        if legacy ~= nil then
+            -- Migrate from legacy addon crafts folder to config directory.
+            store.save(legacy)
+            return legacy
         end
 
         return store.empty()
@@ -49,7 +67,7 @@ local function create_craft_history_store(addon_info, json)
             tbl.entries = {}
         end
 
-        ensure_crafts_dir()
+        ensure_config_dir()
 
         local file = io.open(history_file, 'w+')
         if not file then

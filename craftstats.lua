@@ -4,7 +4,7 @@
 
 addon.name    = 'craftstats'
 addon.author  = 'Lydya'
-addon.version = '0.5.0'
+addon.version = '0.5.2'
 addon.desc    = 'Tracks crafting statistics (success, break, HQ, NQ) and displays counts and percentages.'
 
 
@@ -777,7 +777,7 @@ ashita.events.register('text_in', 'craftstats_text_in', function(e)
 
     -- Synthesis support applied: "Your X skills went up [qualifier]."
     -- The buff ID is identical for all tiers on HorizonXI, so parse the message phrasing.
-    if message:match('[Yy]our %a+ skills went up') then
+    if message:match('[Yy]our .- skills went up') then
         bonus.set_support_tier_from_message(message)
         return false
     end
@@ -830,6 +830,7 @@ ashita.events.register('d3d_present', 'craftstats_present', function()
         ui_text_scale = ui_text_scale,
         on_reset = reset_stats,
         on_prices_save = function()
+            price_lookup_cache = nil
             prices_store.save(item_prices)
         end,
         on_prices_import = function()
