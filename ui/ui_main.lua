@@ -41,6 +41,14 @@ local function get_hq_tier_label(delta)
     return 'Below T0'
 end
 
+local function button_with_font(imgui, fonts, label)
+    local clicked = false
+    fonts.WithFont(18, function()
+        clicked = imgui.Button(label)
+    end)
+    return clicked
+end
+
 function M.render(params)
     if not params.show_window[1] then
         return false
@@ -55,6 +63,7 @@ function M.render(params)
     local on_reset = params.on_reset
     local on_new_session = params.on_new_session
     local ui_text_scale = params.ui_text_scale or 1.0
+    local main_window_scale = ui_text_scale * (14 / 18)
 
     local toggle_prices = false
     local toggle_history = false
@@ -69,12 +78,16 @@ function M.render(params)
 
     local began = false
     pcall(function()
-        began = imgui.Begin('CraftStats', params.show_window, imgui.WindowFlags_AlwaysAutoResize)
+        local window_flags = bit.bor(
+            ImGuiWindowFlags_AlwaysAutoResize or 0,
+            ImGuiWindowFlags_NoCollapse or 0
+        )
+        began = imgui.Begin('CraftStats', params.show_window, window_flags)
         if not began then
             return
         end
 
-        fonts.SetScale(ui_text_scale)
+        fonts.SetScale(main_window_scale)
         fonts.Title('Statistics')
         imgui.Separator()
         fonts.Label(string.format('Success: %d (%.1f%%)', stats.success, stats.total > 0 and stats.success / stats.total * 100 or 0))
@@ -142,19 +155,19 @@ function M.render(params)
             end
         end
         imgui.Separator()
-        if imgui.Button('Reset Stats') then
+        if button_with_font(imgui, fonts, 'Reset Stats') then
             on_reset()
         end
         imgui.SameLine()
-        if imgui.Button('Prices') then
+        if button_with_font(imgui, fonts, 'Prices') then
             toggle_prices = true
         end
         imgui.SameLine()
-        if imgui.Button('History') then
+        if button_with_font(imgui, fonts, 'History') then
             toggle_history = true
         end
         imgui.SameLine()
-        if imgui.Button('New Session') then
+        if button_with_font(imgui, fonts, 'New Session') then
             if type(on_new_session) == 'function' then
                 on_new_session()
             else

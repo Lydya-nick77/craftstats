@@ -292,6 +292,19 @@ local function create_prices_store(addon_info, json, recipes_data)
             end
         end
 
+        local function add_hq_result_names(recipe)
+            if type(recipe) ~= 'table' then
+                return
+            end
+
+            for key, value in pairs(recipe) do
+                if type(key) == 'string' and key:match('^hq%d+$') then
+                    local hq_name = normalize_result_item_name(value)
+                    add_name(hq_name)
+                end
+            end
+        end
+
         local recipe_index = recipes_data
         if type(recipe_index) ~= 'table' then
             local ok, loaded = pcall(require, 'recipes')
@@ -305,6 +318,7 @@ local function create_prices_store(addon_info, json, recipes_data)
                 if type(recipe) == 'table' then
                     local result_name = normalize_result_item_name(recipe.name)
                     add_name(result_name)
+                    add_hq_result_names(recipe)
 
                     local crystal_name = normalize_name(recipe.crystal)
                     add_name(crystal_name)

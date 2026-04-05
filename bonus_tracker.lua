@@ -209,19 +209,25 @@ local function create_bonus_tracker()
             return 0
         end
 
+        -- Apostrophes in item names can vary by source/encoding; normalize them away for matching.
+        local name_key = name_lc:gsub("['`%.]", ''):gsub('%s+', ' '):gsub('^%s*(.-)%s*$', '%1')
+
         -- Some guild glasses names do not carry the craft in the item name.
         local explicit_name_to_skill = {
             ['protective spectacles'] = 6,
+            ['protective specs'] = 6,
             ['shaded spectacles'] = 3,
-            ["chef's hat"] = 8,
+            ['shaded specs'] = 3,
+            ['chefs hat'] = 8,
         }
-        local explicit_skill = explicit_name_to_skill[name_lc]
+        local explicit_skill = explicit_name_to_skill[name_key]
         if explicit_skill ~= nil then
             bonus_map[explicit_skill] = (bonus_map[explicit_skill] or 0) + 1
             return 1
         end
 
         local is_guild_gear = name_lc:find('apron', 1, true)
+            or name_lc:find('apn', 1, true)
             or name_lc:find('gloves', 1, true)
             or name_lc:find('mitts', 1, true)
             or name_lc:find('glasses', 1, true)
@@ -234,28 +240,37 @@ local function create_bonus_tracker()
         end
 
         local guild_to_skill = {
-            ["carpenter's"] = 1,
+            ['carpenters'] = 1,
+            ['carpenter'] = 1,
             ["woodworking"] = 1,
-            ["blacksmith's"] = 2,
-            ["smithy's"] = 2,
+            ['blacksmiths'] = 2,
+            ['blacksmith'] = 2,
+            ['smithys'] = 2,
             ["smithing"] = 2,
-            ["goldsmith's"] = 3,
+            ['goldsmiths'] = 3,
+            ['goldsmith'] = 3,
             ["goldsmithing"] = 3,
-            ["weaver's"] = 4,
+            ['weavers'] = 4,
+            ['weaver'] = 4,
             ["clothcraft"] = 4,
-            ["tanner's"] = 5,
+            ['tanners'] = 5,
+            ['tanner'] = 5,
             ["leathercraft"] = 5,
-            ["boneworker's"] = 6,
+            ['boneworkers'] = 6,
+            ['boneworker'] = 6,
             ["bonecraft"] = 6,
-            ["alchemist's"] = 7,
+            ['alchemists'] = 7,
+            ['alchemist'] = 7,
             ["alchemy"] = 7,
-            ["culinarian's"] = 8,
-            ["chef's"] = 8,
+            ['culinarians'] = 8,
+            ['culinarian'] = 8,
+            ['chefs'] = 8,
+            ['chef'] = 8,
             ["cooking"] = 8,
         }
 
         for guild_name, craft_id in pairs(guild_to_skill) do
-            if name_lc:find(guild_name, 1, true) then
+            if name_key:find(guild_name, 1, true) then
                 bonus_map[craft_id] = (bonus_map[craft_id] or 0) + 1
                 return 1
             end

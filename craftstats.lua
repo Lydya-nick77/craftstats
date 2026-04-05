@@ -4,14 +4,25 @@
 
 addon.name    = 'craftstats'
 addon.author  = 'Lydya'
-addon.version = '0.5.2'
+addon.version = '0.6.0'
 addon.desc    = 'Tracks crafting statistics (success, break, HQ, NQ) and displays counts and percentages.'
 
 
 require('common')
 local imgui = require('imgui')
 local json = require('json')
-local recipes = require('recipes')
+-- Recipe data starts empty; sub-modules are loaded one per d3d_present frame (see below).
+local recipes = {
+    by_name = {},
+    by_result = {
+        [637] = {
+            name = 'Mythril Ingot',
+            skill = 'Smithing',
+            crystal = 'Fire Crystal',
+            ingredients = { 'Mythril Ore x4' },
+        },
+    },
+}
 
 local function load_local_module(name)
     if addon and addon.path and type(addon.path) == 'string' and #addon.path > 0 then
@@ -63,9 +74,11 @@ local function find_recipe(item_id, item_name)
     return nil
 end
 
-local stats = stats_store.load()
-local item_prices = prices_store.load_or_import()
-local craft_history = history_store.load()
+-- Data is loaded lazily across the first few d3d_present frames so addon load
+-- returns immediately without freezing the game.  Each store starts empty.
+local stats = stats_store.empty()
+local item_prices = prices_store.empty()
+local craft_history = history_store.empty()
 local pending_lost_items = {}
 local pending_break_entry = nil
 local pending_break_deadline = nil
@@ -140,18 +153,23 @@ local function safe_get_item_id_by_name(name)
 end
 
 -- Recipe lookup indices:
---   recipe_output_index:  "name:qty" -> recipe
---   recipe_hq_index:      "name:qty" -> {recipe, tier}
---   crystal_recipe_index: crystal_id -> {{recipe, needed_counts, needed_total}, ...}
--- Output/HQ indices are cheap and prewarmed; crystal buckets are built lazily per crystal ID.
+--   recipe_output_index:    "name:qty" -> recipe
+--   recipe_hq_index:        "name:qty" -> {recipe, tier}
+--   crystal_name_to_recipes: lowercase crystal name -> {recipe, ...}  (built at load, no AshitaCore)
+--   crystal_name_originals:  lowercase crystal name -> original-cased string (for ID lookup)
+--   crystal_recipe_index:   crystal_id -> {{recipe, needed_counts, needed_total}, ...}
 local recipe_output_index = nil
 local recipe_hq_index = nil
+local crystal_name_to_recipes = nil
+local crystal_name_originals = nil
 local crystal_recipe_index = nil
 local crystal_index_built_for = nil
 
 local function build_result_indices()
     recipe_output_index = {}
     recipe_hq_index = {}
+    crystal_name_to_recipes = {}
+    crystal_name_originals = {}
     for _, recipe in pairs(recipes.by_name or {}) do
         if type(recipe) == 'table' then
             if recipe.name ~= nil then
@@ -170,6 +188,19 @@ local function build_result_indices()
                     end
                 end
             end
+            -- Group by crystal name so ensure_crystal_bucket iterates only the relevant subset.
+            if recipe.crystal then
+                local c_base, _ = parse_ingredient_name_and_qty(recipe.crystal)
+                local c_key = normalize_price_item_name(c_base):lower()
+                if c_key ~= '' then
+                    if not crystal_name_to_recipes[c_key] then
+                        crystal_name_to_recipes[c_key] = {}
+                        crystal_name_originals[c_key] = c_base
+                    end
+                    local tbl = crystal_name_to_recipes[c_key]
+                    tbl[#tbl + 1] = recipe
+                end
+            end
         end
     end
 end
@@ -186,32 +217,66 @@ local function ensure_crystal_bucket(crystal_id)
     if crystal_index_built_for == nil then crystal_index_built_for = {} end
     if crystal_index_built_for[crystal_id] then return end
 
+    -- Fast path: resolve crystal name from ID then look up the pre-grouped recipe list.
+    -- This is O(crystal_recipes) instead of O(all_recipes), and skips per-recipe crystal
+    -- ID resolution entirely.
+    local recipe_list
+    if crystal_name_to_recipes ~= nil then
+        local c_name_raw = item_resources.get_item_name_by_id(crystal_id)
+        if c_name_raw then
+            local c_key = normalize_price_item_name(c_name_raw):lower()
+            recipe_list = crystal_name_to_recipes[c_key] or {}
+        else
+            recipe_list = {}
+        end
+    else
+        -- Index not built yet: fall back to full scan (original behaviour).
+        recipe_list = {}
+        for _, recipe in pairs(recipes.by_name or {}) do
+            if type(recipe) == 'table' and recipe.crystal and type(recipe.ingredients) == 'table' then
+                local c_name2, _ = parse_ingredient_name_and_qty(recipe.crystal)
+                local c_id2 = safe_get_item_id_by_name(c_name2)
+                if c_id2 and c_id2 == crystal_id then
+                    recipe_list[#recipe_list + 1] = recipe
+                end
+            end
+        end
+    end
+
     local bucket = {}
-    for _, recipe in pairs(recipes.by_name or {}) do
-        if type(recipe) == 'table' and recipe.crystal and type(recipe.ingredients) == 'table' then
-            local c_name, _ = parse_ingredient_name_and_qty(recipe.crystal)
-            local c_id = safe_get_item_id_by_name(c_name)
-            if c_id and c_id == crystal_id then
-                local needed_counts = {}
-                local needed_total = 0
-                local ok_recipe = true
-                for _, ing in ipairs(recipe.ingredients) do
-                    local i_name, i_qty = parse_ingredient_name_and_qty(ing)
-                    local i_id = safe_get_item_id_by_name(i_name)
-                    if not i_id then ok_recipe = false break end
-                    local qty = math.max(1, tonumber(i_qty) or 1)
-                    needed_counts[i_id] = (needed_counts[i_id] or 0) + qty
-                    needed_total = needed_total + qty
-                end
-                if ok_recipe then
-                    bucket[#bucket + 1] = {recipe = recipe, needed_counts = needed_counts, needed_total = needed_total}
-                end
+    for _, recipe in ipairs(recipe_list) do
+        if type(recipe) == 'table' and type(recipe.ingredients) == 'table' then
+            local needed_counts = {}
+            local needed_total = 0
+            local ok_recipe = true
+            for _, ing in ipairs(recipe.ingredients) do
+                local i_name, i_qty = parse_ingredient_name_and_qty(ing)
+                local i_id = safe_get_item_id_by_name(i_name)
+                if not i_id then ok_recipe = false break end
+                local qty = math.max(1, tonumber(i_qty) or 1)
+                needed_counts[i_id] = (needed_counts[i_id] or 0) + qty
+                needed_total = needed_total + qty
+            end
+            if ok_recipe then
+                bucket[#bucket + 1] = {recipe = recipe, needed_counts = needed_counts, needed_total = needed_total}
             end
         end
     end
 
     crystal_recipe_index[crystal_id] = bucket
     crystal_index_built_for[crystal_id] = true
+end
+
+-- Prewarm all crystal buckets so the first craft has zero index-build cost.
+-- Called once on the first d3d_present frame when AshitaCore is fully ready.
+local function prewarm_all_crystal_buckets()
+    if crystal_name_originals == nil then return end
+    for _, orig_name in pairs(crystal_name_originals) do
+        local id = safe_get_item_id_by_name(orig_name)
+        if id then
+            ensure_crystal_bucket(id)
+        end
+    end
 end
 
 local function find_recipe_by_output_name(item_name, item_qty)
@@ -361,11 +426,45 @@ local function get_lost_items_cost(lost_items_str)
         return 0
     end
     local lookup = get_price_lookup()
+
+    local prefix_patterns = {
+        '^handful of%s+',
+        '^chunk of%s+',
+        '^lump of%s+',
+        '^block of%s+',
+        '^sheet of%s+',
+        '^ball of%s+',
+        '^bottle of%s+',
+        '^vial of%s+',
+        '^flask of%s+',
+        '^jar of%s+',
+        '^pot of%s+',
+        '^sprig of%s+',
+        '^head of%s+',
+        '^slice of%s+',
+        '^clump of%s+',
+    }
+
     local total = 0
     for item_str in (lost_items_str .. ','):gmatch('([^,]+),') do
         local name, qty = parse_ingredient_name_and_qty(trim_text(item_str))
         local key = normalize_price_item_name(name):lower()
-        local price = lookup[key] or 0
+        local price = lookup[key]
+
+        -- Break messages can include container prefixes while price entries often use the base item name.
+        if price == nil then
+            for _, pattern in ipairs(prefix_patterns) do
+                local base_key = key:gsub(pattern, '')
+                if base_key ~= key then
+                    price = lookup[base_key]
+                    if price ~= nil then
+                        break
+                    end
+                end
+            end
+        end
+
+        price = price or 0
         total = total + price * math.max(1, tonumber(qty) or 1)
     end
     return total
@@ -546,9 +645,7 @@ end
 -- Initialize skill values on addon load
 bonus.update_skills()
 
--- Prewarm lightweight output/HQ indices at load time; crystal ID buckets are lazy.
-pcall(build_result_indices)
-
+-- build_result_indices and all store loads are deferred to d3d_present frames (see below).
 local function reset_stats()
     local empty = stats_store.empty()
     for key, value in pairs(empty) do
@@ -813,50 +910,131 @@ local function flush_pending_break_entry()
     history_store.save(craft_history)
 end
 
+-- Pre-built params table: avoids allocating a new table + closures every d3d_present frame.
+local ui_render_params = {
+    imgui = imgui,
+    fonts = fonts,
+    chrome = chrome,
+    stats = stats,
+    craft_history = craft_history,
+    bonus = bonus,
+    last_craft = last_craft,
+    item_prices = item_prices,
+    show_window = show_window,
+    ui_text_scale = ui_text_scale,
+    on_reset = reset_stats,
+    on_prices_save = function()
+        price_lookup_cache = nil
+        prices_store.save(item_prices)
+    end,
+    on_prices_import = function()
+        local imported = prices_store.import_from_recipes()
+        local merged = merge_imported_items_preserving_prices(imported)
+        replace_item_prices(merged)
+        prices_store.save(item_prices)
+        return #item_prices.items
+    end,
+    on_prices_import_hgather = function()
+        local merged, updated, matched, ok = prices_store.import_prices_from_hgather(item_prices)
+        if not ok then
+            return 0, 0, false
+        end
+        replace_item_prices(merged)
+        prices_store.save(item_prices)
+        return matched or 0, updated or 0, true
+    end,
+    on_history_clear = function()
+        return clear_history()
+    end,
+    on_new_session = function()
+        reset_stats()
+        clear_history()
+    end,
+}
+
+-- Multi-phase deferred startup: each step runs on its own d3d_present frame so no single
+-- frame blocks the game long enough to be felt as a freeze.
+--   Frames 1-8: load one recipe sub-module per frame (mutate recipes.by_name in place)
+--   Frame 9:  build recipe/crystal-name indices + load stats
+--   Frame 10: load item prices (largest JSON decode)
+--   Frame 11: load craft history
+--   Frame 12+: prewarm one crystal ID bucket per frame
+local recipe_submodule_queue = {
+    'recipes.woodworking',
+    'recipes.alchemy',
+    'recipes.bonecraft',
+    'recipes.clothcraft',
+    'recipes.cooking',
+    'recipes.goldsmith',
+    'recipes.leathercraft',
+    'recipes.smithing',
+}
+local recipe_load_index = 0   -- 0 = not started; advances to 8 when all loaded
+local init_step = 0           -- runs AFTER all recipe sub-modules are loaded
+local crystal_prewarm_queue = nil
+local crystal_prewarm_index = 0
+
+local function tick_crystal_prewarm()
+    -- Build the queue lazily after build_result_indices has populated crystal_name_originals.
+    if crystal_prewarm_queue == nil then
+        crystal_prewarm_queue = {}
+        if crystal_name_originals ~= nil then
+            for _, orig_name in pairs(crystal_name_originals) do
+                crystal_prewarm_queue[#crystal_prewarm_queue + 1] = orig_name
+            end
+        end
+    end
+    crystal_prewarm_index = crystal_prewarm_index + 1
+    local orig_name = crystal_prewarm_queue[crystal_prewarm_index]
+    if orig_name == nil then return end  -- all crystals prewarmed
+    local id = safe_get_item_id_by_name(orig_name)
+    if id then
+        ensure_crystal_bucket(id)
+    end
+end
+
 ashita.events.register('d3d_present', 'craftstats_present', function()
+    if recipe_load_index < #recipe_submodule_queue then
+        -- Load one recipe sub-module per frame; merge entries into the shared recipes table.
+        recipe_load_index = recipe_load_index + 1
+        pcall(function()
+            local sub = require(recipe_submodule_queue[recipe_load_index])
+            if type(sub) == 'table' and type(sub.by_name) == 'table' then
+                for k, v in pairs(sub.by_name) do
+                    recipes.by_name[k] = v
+                end
+            end
+        end)
+    elseif init_step == 0 then
+        -- All recipe files loaded; build indices and load stats (both fast, pure Lua).
+        init_step = 1
+        pcall(function()
+            local ls = stats_store.load()
+            for k, v in pairs(ls) do stats[k] = v end
+            build_result_indices()
+        end)
+    elseif init_step == 1 then
+        -- Step 1: item prices JSON (1000+ items, potentially the slowest decode).
+        init_step = 2
+        pcall(function()
+            local lp = prices_store.load_or_import()
+            item_prices.items = lp.items or {}
+        end)
+    elseif init_step == 2 then
+        -- Step 2: craft history JSON.
+        init_step = 3
+        pcall(function()
+            local lh = history_store.load()
+            craft_history.entries = lh.entries or {}
+        end)
+    elseif crystal_prewarm_queue == nil or crystal_prewarm_index < #crystal_prewarm_queue then
+        -- Step 3+: prewarm one crystal bucket per frame until done.
+        pcall(tick_crystal_prewarm)
+    end
     if pending_break_entry and os.clock() >= pending_break_deadline then
         flush_pending_break_entry()
     end
-    ui.render({
-        imgui = imgui,
-        fonts = fonts,
-        chrome = chrome,
-        stats = stats,
-        craft_history = craft_history,
-        bonus = bonus,
-        last_craft = last_craft,
-        item_prices = item_prices,
-        show_window = show_window,
-        ui_text_scale = ui_text_scale,
-        on_reset = reset_stats,
-        on_prices_save = function()
-            price_lookup_cache = nil
-            prices_store.save(item_prices)
-        end,
-        on_prices_import = function()
-            local imported = prices_store.import_from_recipes()
-            local merged = merge_imported_items_preserving_prices(imported)
-            replace_item_prices(merged)
-            prices_store.save(item_prices)
-            return #item_prices.items
-        end,
-        on_prices_import_hgather = function()
-            local merged, updated, matched, ok = prices_store.import_prices_from_hgather(item_prices)
-            if not ok then
-                return 0, 0, false
-            end
-            replace_item_prices(merged)
-            prices_store.save(item_prices)
-            return matched or 0, updated or 0, true
-        end,
-        on_history_clear = function()
-            return clear_history()
-        end,
-        on_new_session = function()
-            reset_stats()
-            clear_history()
-        end,
-    })
+    ui.render(ui_render_params)
 end)
 
 return {

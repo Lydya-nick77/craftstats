@@ -11,12 +11,26 @@ local function trim_text(value)
     return value:match('^%s*(.-)%s*$') or ''
 end
 
+-- Guard for ensure_price_buffers: skip the full item iteration when buffers are
+-- already initialised.  After any import, replace_item_prices creates brand-new
+-- entry objects (no price_buffer field), so checking items[1] reliably detects
+-- when a fresh pass is needed.
 local function ensure_price_buffers(item_prices)
     if type(item_prices) ~= 'table' or type(item_prices.items) ~= 'table' then
         return
     end
 
-    for i, entry in ipairs(item_prices.items) do
+    local items = item_prices.items
+    if #items == 0 then
+        return
+    end
+
+    -- Fast-path: if the first entry already has a buffer every entry does.
+    if type(items[1].price_buffer) == 'table' then
+        return
+    end
+
+    for i, entry in ipairs(items) do
         entry.id = tonumber(entry.id) or i
         entry.name = tostring(entry.name or '')
         entry.price = math.max(0, math.floor(tonumber(entry.price) or 0))
@@ -47,13 +61,23 @@ local function push_prices_table_theme(imgui)
     return count
 end
 
+local function button_with_font(imgui, fonts, label)
+    local clicked = false
+    fonts.WithFont(18, function()
+        clicked = imgui.Button(label)
+    end)
+    return clicked
+end
+
 local function render_prices_editor(imgui, fonts, item_prices, on_prices_save, on_prices_import, on_prices_import_hgather)
     fonts.Title('Item Prices')
 
     fonts.Label('Search:')
     imgui.SameLine()
     imgui.PushItemWidth(260)
-    imgui.InputText('##craftstats_prices_search', prices_search_buffer, 128)
+    fonts.WithFont(18, function()
+        imgui.InputText('##craftstats_prices_search', prices_search_buffer, 128)
+    end)
     imgui.PopItemWidth()
 
     local search_text = trim_text(prices_search_buffer[1])
@@ -88,10 +112,12 @@ local function render_prices_editor(imgui, fonts, item_prices, on_prices_save, o
 
                 imgui.TableSetColumnIndex(1)
                 imgui.PushItemWidth(-1)
-                if imgui.InputInt('##price_' .. tostring(entry.id or i), entry.price_buffer, 0, 0) then
-                    entry.price = math.max(0, math.floor(tonumber(entry.price_buffer[1]) or 0))
-                    entry.price_buffer[1] = entry.price
-                end
+                fonts.WithFont(18, function()
+                    if imgui.InputInt('##price_' .. tostring(entry.id or i), entry.price_buffer, 0, 0) then
+                        entry.price = math.max(0, math.floor(tonumber(entry.price_buffer[1]) or 0))
+                        entry.price_buffer[1] = entry.price
+                    end
+                end)
                 imgui.PopItemWidth()
             end
         end
@@ -111,7 +137,7 @@ local function render_prices_editor(imgui, fonts, item_prices, on_prices_save, o
         imgui.PopStyleColor(table_style_colors)
     end
 
-    if imgui.Button('Import Items') then
+    if button_with_font(imgui, fonts, 'Import Items') then
         if type(on_prices_import) == 'function' then
             local imported_count = tonumber(on_prices_import()) or 0
             prices_action_status = string.format('Imported %d items from recipes.', imported_count)
@@ -120,7 +146,7 @@ local function render_prices_editor(imgui, fonts, item_prices, on_prices_save, o
     end
 
     imgui.SameLine()
-    if imgui.Button('Import prices from HGather') then
+    if button_with_font(imgui, fonts, 'Import prices from HGather') then
         if type(on_prices_import_hgather) == 'function' then
             local matched, updated, ok = on_prices_import_hgather()
             if ok == false then
@@ -135,7 +161,7 @@ local function render_prices_editor(imgui, fonts, item_prices, on_prices_save, o
     end
 
     imgui.SameLine()
-    if imgui.Button('Save Prices') then
+    if button_with_font(imgui, fonts, 'Save Prices') then
         if type(on_prices_save) == 'function' then
             on_prices_save()
             prices_action_status = 'Prices saved.'
@@ -160,6 +186,7 @@ function M.render(params)
     local on_prices_import = params.on_prices_import
     local on_prices_import_hgather = params.on_prices_import_hgather
     local ui_text_scale = params.ui_text_scale or 1.0
+    local prices_window_scale = ui_text_scale * (14 / 18)
 
     local prices_style_colors, prices_style_vars = chrome.push_theme()
     imgui.PushStyleVar(ImGuiStyleVar_WindowTitleAlign, { 0.5, 0.5 })
@@ -168,12 +195,16 @@ function M.render(params)
     local prices_open = { true }
     local prices_began = false
     pcall(function()
-        prices_began = imgui.Begin('CraftStats Prices', prices_open, imgui.WindowFlags_AlwaysAutoResize)
+        local window_flags = bit.bor(
+            ImGuiWindowFlags_AlwaysAutoResize or 0,
+            ImGuiWindowFlags_NoCollapse or 0
+        )
+        prices_began = imgui.Begin('CraftStats Prices', prices_open, window_flags)
         if not prices_began then
             return
         end
 
-        fonts.SetScale(ui_text_scale)
+        fonts.SetScale(prices_window_scale)
         render_prices_editor(imgui, fonts, item_prices, on_prices_save, on_prices_import, on_prices_import_hgather)
     end)
 

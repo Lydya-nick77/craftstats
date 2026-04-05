@@ -1,6 +1,12 @@
 local M = {}
 local history_action_status = ''
-local PROFIT_FONT_SIZE = 24
+local PROFIT_FONT_SIZE = 18
+
+-- Profit cache: recalculate only when the number of history entries changes.
+local cached_profit = nil
+local cached_profit_size = -1
+local cached_profit_width = nil
+local cached_profit_for_width = nil
 
 local function get_history_entries(craft_history)
     if type(craft_history) == 'table' and type(craft_history.entries) == 'table' then
@@ -82,12 +88,35 @@ local function render_profit_summary(imgui, fonts, profit)
     end)
 end
 
+local function button_with_font(imgui, fonts, label)
+    local clicked = false
+    fonts.WithFont(18, function()
+        clicked = imgui.Button(label)
+    end)
+    return clicked
+end
+
 local function render_history_editor(imgui, fonts, craft_history, on_history_clear)
     fonts.Title('History')
 
     local entries = get_history_entries(craft_history)
-    local profit = calculate_history_profit(entries)
-    local profit_width = measure_profit_summary_width(imgui, fonts, profit)
+
+    -- Only recalculate profit when entry count changes (costs/prices are immutable once logged).
+    local n = #entries
+    if n ~= cached_profit_size then
+        cached_profit = calculate_history_profit(entries)
+        cached_profit_size = n
+        cached_profit_width = nil
+    end
+    local profit = cached_profit
+
+    -- Only remeasure text width when the profit value itself changes.
+    if cached_profit_width == nil or cached_profit_for_width ~= profit then
+        cached_profit_width = measure_profit_summary_width(imgui, fonts, profit)
+        cached_profit_for_width = profit
+    end
+    local profit_width = cached_profit_width
+
     local table_style_colors = push_history_table_theme(imgui)
 
     if imgui.BeginTable('craftstats_history_header', 2, ImGuiTableFlags_SizingStretchProp) then
@@ -96,13 +125,18 @@ local function render_history_editor(imgui, fonts, craft_history, on_history_cle
         imgui.TableNextRow()
 
         imgui.TableSetColumnIndex(0)
-        if imgui.Button('Clear History') then
+        if button_with_font(imgui, fonts, 'Clear History') then
             if type(on_history_clear) == 'function' then
                 local cleared = tonumber(on_history_clear()) or 0
                 history_action_status = string.format('History cleared (%d entries).', cleared)
                 entries = get_history_entries(craft_history)
                 profit = calculate_history_profit(entries)
                 profit_width = measure_profit_summary_width(imgui, fonts, profit)
+                -- Keep cache consistent so next frame sees the cleared state immediately.
+                cached_profit = profit
+                cached_profit_size = #entries
+                cached_profit_width = profit_width
+                cached_profit_for_width = profit
             end
         end
 
@@ -127,20 +161,21 @@ local function render_history_editor(imgui, fonts, craft_history, on_history_cle
         ImGuiTableFlags_RowBg,
         ImGuiTableFlags_Borders,
         ImGuiTableFlags_BordersInnerV,
+        ImGuiTableFlags_Resizable,
         ImGuiTableFlags_ScrollX,
         ImGuiTableFlags_ScrollY,
-        ImGuiTableFlags_SizingStretchProp
+        ImGuiTableFlags_SizingFixedFit
     )
 
-    if imgui.BeginTable('craftstats_history_table', 8, flags, { 0, 360 }) then
-        imgui.TableSetupColumn('Time', ImGuiTableColumnFlags_WidthFixed, 150)
-        imgui.TableSetupColumn('Recipe')
-        imgui.TableSetupColumn('Lvl', ImGuiTableColumnFlags_WidthFixed, 55)
-        imgui.TableSetupColumn('Skill', ImGuiTableColumnFlags_WidthFixed, 65)
-        imgui.TableSetupColumn('Result', ImGuiTableColumnFlags_WidthFixed, 65)
-        imgui.TableSetupColumn('Cost', ImGuiTableColumnFlags_WidthFixed, 80)
-        imgui.TableSetupColumn('Made', ImGuiTableColumnFlags_WidthFixed, 80)
-        imgui.TableSetupColumn('Lost Items')
+    if imgui.BeginTable('craftstats_history_table', 8, flags, { 820, 360 }) then
+        imgui.TableSetupColumn('Time', ImGuiTableColumnFlags_WidthFixed, 120)
+        imgui.TableSetupColumn('Recipe', ImGuiTableColumnFlags_WidthFixed, 170)
+        imgui.TableSetupColumn('Lvl', ImGuiTableColumnFlags_WidthFixed, 45)
+        imgui.TableSetupColumn('Skill', ImGuiTableColumnFlags_WidthFixed, 55)
+        imgui.TableSetupColumn('Result', ImGuiTableColumnFlags_WidthFixed, 55)
+        imgui.TableSetupColumn('Cost', ImGuiTableColumnFlags_WidthFixed, 70)
+        imgui.TableSetupColumn('Made', ImGuiTableColumnFlags_WidthFixed, 70)
+        imgui.TableSetupColumn('Lost Items', ImGuiTableColumnFlags_WidthStretch)
         imgui.TableHeadersRow()
 
         for i = #entries, 1, -1 do
@@ -191,6 +226,7 @@ function M.render(params)
     local craft_history = params.craft_history
     local on_history_clear = params.on_history_clear
     local ui_text_scale = params.ui_text_scale or 1.0
+    local history_window_scale = ui_text_scale * (14 / 18)
 
     local style_colors, style_vars = chrome.push_theme()
     imgui.PushStyleVar(ImGuiStyleVar_WindowTitleAlign, { 0.5, 0.5 })
@@ -199,12 +235,16 @@ function M.render(params)
     local open = { true }
     local began = false
     pcall(function()
-        began = imgui.Begin('CraftStats History', open, imgui.WindowFlags_AlwaysAutoResize)
+        local window_flags = bit.bor(
+            ImGuiWindowFlags_AlwaysAutoResize or 0,
+            ImGuiWindowFlags_NoCollapse or 0
+        )
+        began = imgui.Begin('CraftStats History', open, window_flags)
         if not began then
             return
         end
 
-        fonts.SetScale(ui_text_scale)
+        fonts.SetScale(history_window_scale)
         render_history_editor(imgui, fonts, craft_history, on_history_clear)
     end)
 
