@@ -4,7 +4,7 @@
 
 addon.name    = 'craftstats'
 addon.author  = 'Lydya'
-addon.version = '0.6.0'
+addon.version = '0.6.1'
 addon.desc    = 'Tracks crafting statistics (success, break, HQ, NQ) and displays counts and percentages.'
 
 
@@ -735,7 +735,10 @@ local function handle_craft_result_006F(result_byte, item_name, item_qty, hq_tie
         end
 
         local derived = determine_result_label(item_name or '', item_qty or 1, recipe)
-        if derived ~= 'NQ' then
+        -- 0x0030 is the authoritative quality source. Only substitute derived when it
+        -- agrees with result_hint; if they disagree (e.g. 0x006F quantity byte is off
+        -- for lumberjack/boltmaker multi-yield recipes), trust result_hint.
+        if derived == result_hint then
             return derived
         end
 
