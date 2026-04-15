@@ -664,6 +664,7 @@ end
 
 -- ImGui UI for live stats
 local show_window = { false }
+local last_activity_time = 0
 local ui_text_scale = 0.92
 
 -- Reset stats and toggle command
@@ -676,6 +677,7 @@ ashita.events.register('command', 'craftstats_command', function(e)
         end
         if args[2] == nil or args[2] == '' then
             show_window[1] = not show_window[1]
+            if show_window[1] then last_activity_time = os.clock() end
             return true
         end
     end
@@ -778,6 +780,7 @@ ashita.events.register('packet_in', 'craftstats_packet_in', function(e)
                 local now = os.clock()
                 if now - last_craft_time > craft_cooldown then
                     last_craft_time = now
+                    last_activity_time = now
                     local result = struct.unpack('b', e.data_modified, 0x0C + 0x01)
                     last_craft.result_label = handle_craft_result_0030(result)
                     -- Show window when a craft result is received
@@ -1050,6 +1053,9 @@ ashita.events.register('d3d_present', 'craftstats_present', function()
     end
     if pending_break_entry and os.clock() >= pending_break_deadline then
         flush_pending_break_entry()
+    end
+    if show_window[1] and last_activity_time > 0 and (os.clock() - last_activity_time) > 300 then
+        show_window[1] = false
     end
     ui.render(ui_render_params)
 end)
