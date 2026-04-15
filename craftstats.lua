@@ -1,10 +1,10 @@
 -- craftstats.lua
 -- Ashita v4 addon for tracking crafting statistics and skills
 -- Tracks: Success, Break, HQ, NQ counts and percentages
-
+-- Horizonxi Approved ticket general-contact-1987
 addon.name    = 'craftstats'
 addon.author  = 'Lydya'
-addon.version = '0.6.1'
+addon.version = '0.7.1'
 addon.desc    = 'Tracks crafting statistics (success, break, HQ, NQ) and displays counts and percentages.'
 
 
@@ -663,7 +663,7 @@ local function clear_history()
 end
 
 -- ImGui UI for live stats
-local show_window = { true }
+local show_window = { false }
 local ui_text_scale = 0.92
 
 -- Reset stats and toggle command
@@ -730,19 +730,31 @@ local function handle_craft_result_006F(result_byte, item_name, item_qty, hq_tie
     end
 
     if is_hq_label(result_hint) then
-        if hq_tier == result_hint then
-            return result_hint
-        end
-
+        -- Determine exact tier from crafted item name and quantity.
+        -- 0x0030 on Horizon always reports byte 2 (HQ1) regardless of actual tier,
+        -- so use quantity-matching against the recipe's hq1/hq2/hq3 fields instead.
         local derived = determine_result_label(item_name or '', item_qty or 1, recipe)
-        -- 0x0030 is the authoritative quality source. Only substitute derived when it
-        -- agrees with result_hint; if they disagree (e.g. 0x006F quantity byte is off
-        -- for lumberjack/boltmaker multi-yield recipes), trust result_hint.
-        if derived == result_hint then
+        if derived ~= 'NQ' then
             return derived
         end
-
-        return result_hint
+        -- Name-based match failed (game may return an abbreviated name, e.g. "Mahogany Lbr."
+        -- instead of "Mahogany Lumber"). Fall back to quantity-only matching against the
+        -- recipe's hq fields — recipe is confirmed via crystal+ingredient IDs from 0x0096.
+        if type(recipe) == 'table' then
+            local qty = tonumber(item_qty) or 0
+            if qty > 1 then
+                for _, field in ipairs({'hq3', 'hq2', 'hq1'}) do
+                    if recipe[field] ~= nil then
+                        local _, fqty = parse_ingredient_name_and_qty(recipe[field])
+                        if (tonumber(fqty) or 1) == qty then
+                            return field:upper()
+                        end
+                    end
+                end
+            end
+        end
+        -- Fallback: hq_tier was resolved from the HQ result index, then result_hint as last resort.
+        return hq_tier or result_hint
     end
 
     if result_byte == 0 or result_byte == 1 or result_byte == 12 then
@@ -768,6 +780,8 @@ ashita.events.register('packet_in', 'craftstats_packet_in', function(e)
                     last_craft_time = now
                     local result = struct.unpack('b', e.data_modified, 0x0C + 0x01)
                     last_craft.result_label = handle_craft_result_0030(result)
+                    -- Show window when a craft result is received
+                    show_window[1] = true
                 end
             end
         end

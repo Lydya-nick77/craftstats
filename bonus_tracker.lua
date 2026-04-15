@@ -409,6 +409,13 @@ local function create_bonus_tracker()
         return table.concat(parts, ':')
     end
 
+    -- Bonuses granted only when the item is in the main hand (slot 4).  Keys are
+    -- lowercase item names.  These are applied separately from the cached
+    -- get_item_bonus_map so the cache stays slot-independent.
+    local hardcoded_mainhand_bonuses = {
+        ['hocho'] = { [8] = 3 },  -- Cooking +3
+    }
+
     local function get_item_bonus_map(item_id, item_name, resource)
         local cached = gear_bonus_cache_by_item_id[item_id]
         if cached ~= nil then
@@ -451,6 +458,16 @@ local function create_bonus_tracker()
                         local item_name = trim_text(tostring((resource and resource.Name and resource.Name[1]) or ('Item #' .. tostring(item.Id))))
                         local item_map = get_item_bonus_map(item.Id, item_name, resource)
                         apply_bonus_map(rebuilt, item_map)
+
+                        -- Apply main-hand-only bonuses (slot 4 = main hand).
+                        if slot == 4 then
+                            local mh_bonus = hardcoded_mainhand_bonuses[item_name:lower()]
+                            if mh_bonus then
+                                for skill_id, val in pairs(mh_bonus) do
+                                    rebuilt[skill_id] = (rebuilt[skill_id] or 0) + val
+                                end
+                            end
+                        end
                     end
                 end
             end
