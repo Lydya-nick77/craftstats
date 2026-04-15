@@ -398,7 +398,9 @@ local function create_bonus_tracker()
 
     local function make_gear_signature(inventory)
         local parts = {}
-        for slot = 4, 7 do
+        -- Include slot 0 (main hand weapon) so equipping/unequipping a weapon
+        -- invalidates the signature and the bonus is re-evaluated.
+        for _, slot in ipairs({0, 4, 5, 6, 7}) do
             local equipped = inventory:GetEquippedItem(slot)
             local raw_index = 0
             if equipped ~= nil and equipped.Index ~= nil then
@@ -446,7 +448,8 @@ local function create_bonus_tracker()
             rebuilt[id] = 0
         end
 
-        for slot = 4, 7 do
+        -- Slot 0 = main hand weapon; slots 4-7 = head/body/hands/legs crafting gear.
+        for _, slot in ipairs({0, 4, 5, 6, 7}) do
             local equipped = inventory:GetEquippedItem(slot)
             if equipped ~= nil then
                 local index = bit.band(equipped.Index, 0x00FF)
@@ -459,8 +462,8 @@ local function create_bonus_tracker()
                         local item_map = get_item_bonus_map(item.Id, item_name, resource)
                         apply_bonus_map(rebuilt, item_map)
 
-                        -- Apply main-hand-only bonuses (slot 4 = main hand).
-                        if slot == 4 then
+                        -- Apply main-hand-only bonuses (slot 0 = main hand weapon).
+                        if slot == 0 then
                             local mh_bonus = hardcoded_mainhand_bonuses[item_name:lower()]
                             if mh_bonus then
                                 for skill_id, val in pairs(mh_bonus) do
