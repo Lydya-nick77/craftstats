@@ -416,6 +416,7 @@ local function create_bonus_tracker()
     -- get_item_bonus_map so the cache stays slot-independent.
     local hardcoded_mainhand_bonuses = {
         ['hocho'] = { [8] = 3 },  -- Cooking +3
+        ['caduceus'] = { [7] = 1 },  -- Alchemy +1
     }
 
     local function get_item_bonus_map(item_id, item_name, resource)
