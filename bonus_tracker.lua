@@ -415,7 +415,7 @@ local function create_bonus_tracker()
     -- lowercase item names.  These are applied separately from the cached
     -- get_item_bonus_map so the cache stays slot-independent.
     local hardcoded_mainhand_bonuses = {
-        ['hocho'] = { [8] = 3 },  -- Cooking +3
+        ['hocho']    = { [8] = 3 },  -- Cooking +3
         ['caduceus'] = { [7] = 1 },  -- Alchemy +1
     }
 
