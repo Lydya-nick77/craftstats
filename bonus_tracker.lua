@@ -214,11 +214,13 @@ local function create_bonus_tracker()
 
         -- Some guild glasses names do not carry the craft in the item name.
         local explicit_name_to_skill = {
-            ['protective spectacles'] = 6,
-            ['protective specs'] = 6,
-            ['shaded spectacles'] = 3,
-            ['shaded specs'] = 3,
-            ['chefs hat'] = 8,
+            ['protective spectacles']  = 6,
+            ['protective specs']       = 6,
+            ['shaded spectacles']      = 3,
+            ['shaded specs']           = 3,
+            ['magnifying spectacles']  = 4,  
+            ['magnifying specs']       = 4,  
+            ['chefs hat']              = 8,
         }
         local explicit_skill = explicit_name_to_skill[name_key]
         if explicit_skill ~= nil then
