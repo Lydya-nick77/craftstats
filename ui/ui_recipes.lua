@@ -47,14 +47,20 @@ ashita.events.register('unload', 'cs_recipes_icon_unload', function()
     scan_cache_complete = false
     inventory_count_cache = {}
     inventory_cache_dirty = true
+    last_inventory_refresh = 0
 end)
 
 -- Inventory count cache (item_id -> count)
 local inventory_count_cache = {}
 local inventory_cache_dirty = true
+local inventory_refresh_interval = 0.75
+local last_inventory_refresh = 0
 
 local function update_inventory_cache()
-    if not inventory_cache_dirty then return true end
+    local now = os.clock()
+    if not inventory_cache_dirty and (now - last_inventory_refresh) < inventory_refresh_interval then
+        return true
+    end
     inventory_count_cache = {}
     local ok, inv_mgr = pcall(function() return AshitaCore:GetMemoryManager():GetInventory() end)
     if not ok or not inv_mgr then 
@@ -73,6 +79,7 @@ local function update_inventory_cache()
         end
     end
     inventory_cache_dirty = false
+    last_inventory_refresh = now
     return true
 end
 

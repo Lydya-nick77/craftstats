@@ -4,7 +4,7 @@
 -- Horizonxi Approved ticket general-contact-1987
 addon.name    = 'craftstats'
 addon.author  = 'Lydya'
-addon.version = '0.8.0'
+addon.version = '0.8.1'
 addon.desc    = 'Tracks crafting statistics (success, break, HQ, NQ) and displays counts and percentages.'
 
 
