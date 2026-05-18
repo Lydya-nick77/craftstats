@@ -1447,7 +1447,7 @@ local alchemy = {
             level = 44,
             subcraft = { 'Bonecraft (99)', 'Leathercraft (57)' },
             crystal = 'Water Crystal',
-            ingredients = { 'Avatar Blood', 'Bugard Tusk', 'Couerl Leather', 'Dhalmel Leather', 'Dragon Talon', 'High-Quality Bugard Skin', 'Lapis Lazuli', 'Manticore Hair' },
+            ingredients = { 'Avatar Blood', 'Bugard Tusk', 'Coeurl Leather', 'Dhalmel Leather', 'Dragon Talon', 'High-Quality Bugard Skin', 'Lapis Lazuli', 'Manticore Hair' },
             hq1 = 'Genie Weskit',
         },
         ['strobe'] = {
@@ -1692,7 +1692,7 @@ local alchemy = {
             level = 49,
             subcraft = { 'Goldsmithing (6)' },
             crystal = 'Fire Crystal',
-            ingredients = { 'Brass Tank x2', 'Couerl Whisker', 'Imperial Cermet', 'Mercury' },
+            ingredients = { 'Brass Tank x2', 'Coeurl Whisker', 'Imperial Cermet', 'Mercury' },
             keyitem = 'Latrochemistry',
         },
         ['melt dagger'] = {
@@ -1922,7 +1922,7 @@ local alchemy = {
             level = 54,
             subcraft = { 'Woodworking (63)' },
             crystal = 'Earth Crystal',
-            ingredients = { 'Animal Glue', 'Bamboo Stick', 'Carbon Fiber', 'Chestnut Lumber', 'Couerl Whisker', 'Water Cluster' },
+            ingredients = { 'Animal Glue', 'Bamboo Stick', 'Carbon Fiber', 'Chestnut Lumber', 'Coeurl Whisker', 'Water Cluster' },
             hq1 = 'Hydro Pump x99',
         },
         ['kilo pump'] = {
@@ -1931,7 +1931,7 @@ local alchemy = {
             level = 54,
             subcraft = { 'Woodworking (76)' },
             crystal = 'Earth Crystal',
-            ingredients = { 'Animal Glue', 'Bamboo Stick', 'Carbon Fiber', 'Chestnut Lumber', 'Couerl Whisker x2', 'Water Cluster' },
+            ingredients = { 'Animal Glue', 'Bamboo Stick', 'Carbon Fiber', 'Chestnut Lumber', 'Coeurl Whisker x2', 'Water Cluster' },
             hq1 = 'Kilo Pump x99',
         },
         ['mega pump'] = {
@@ -1940,7 +1940,7 @@ local alchemy = {
             level = 54,
             subcraft = { 'Woodworking (84)' },
             crystal = 'Earth Crystal',
-            ingredients = { 'Animal Glue', 'Bamboo Stick', 'Carbon Fiber', 'Chestnut Lumber', 'Couerl Whisker x3', 'Water Cluster' },
+            ingredients = { 'Animal Glue', 'Bamboo Stick', 'Carbon Fiber', 'Chestnut Lumber', 'Coeurl Whisker x3', 'Water Cluster' },
             hq1 = 'Mega Pump x99',
         },
         ['melt claws'] = {

@@ -65,8 +65,9 @@ function M.render(params)
     local ui_text_scale = params.ui_text_scale or 1.0
     local main_window_scale = ui_text_scale * (14 / 18)
 
-    local toggle_prices = false
+    local toggle_prices  = false
     local toggle_history = false
+    local toggle_recipes = false
     local pushed_style_colors = 0
     local pushed_style_vars = 0
 
@@ -167,6 +168,10 @@ function M.render(params)
             toggle_history = true
         end
         imgui.SameLine()
+        if button_with_font(imgui, fonts, 'Recipes') then
+            toggle_recipes = true
+        end
+        imgui.SameLine()
         if button_with_font(imgui, fonts, 'New Session') then
             if type(on_new_session) == 'function' then
                 on_new_session()
@@ -192,7 +197,7 @@ function M.render(params)
         end)
     end
 
-    return toggle_prices, toggle_history
+    return toggle_prices, toggle_history, toggle_recipes
 end
 
 return M

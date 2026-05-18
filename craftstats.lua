@@ -4,7 +4,7 @@
 -- Horizonxi Approved ticket general-contact-1987
 addon.name    = 'craftstats'
 addon.author  = 'Lydya'
-addon.version = '0.7.3'
+addon.version = '0.8.0'
 addon.desc    = 'Tracks crafting statistics (success, break, HQ, NQ) and displays counts and percentages.'
 
 
@@ -82,6 +82,22 @@ local craft_history = history_store.empty()
 local pending_lost_items = {}
 local pending_break_entry = nil
 local pending_break_deadline = nil
+local prices_loaded = false
+local history_loaded = false
+
+local function ensure_prices_loaded()
+    if prices_loaded then return end
+    local lp = prices_store.load_or_import()
+    item_prices.items = lp.items or {}
+    prices_loaded = true
+end
+
+local function ensure_history_loaded()
+    if history_loaded then return end
+    local lh = history_store.load()
+    craft_history.entries = lh.entries or {}
+    history_loaded = true
+end
 
 local function trim_text(value)
     if type(value) ~= 'string' then
@@ -267,18 +283,6 @@ local function ensure_crystal_bucket(crystal_id)
     crystal_index_built_for[crystal_id] = true
 end
 
--- Prewarm all crystal buckets so the first craft has zero index-build cost.
--- Called once on the first d3d_present frame when AshitaCore is fully ready.
-local function prewarm_all_crystal_buckets()
-    if crystal_name_originals == nil then return end
-    for _, orig_name in pairs(crystal_name_originals) do
-        local id = safe_get_item_id_by_name(orig_name)
-        if id then
-            ensure_crystal_bucket(id)
-        end
-    end
-end
-
 local function find_recipe_by_output_name(item_name, item_qty)
     if type(item_name) ~= 'string' or item_name == '' then return nil end
     ensure_result_indices()
@@ -356,6 +360,7 @@ end
 local price_lookup_cache = nil
 
 local function get_price_lookup()
+    ensure_prices_loaded()
     if price_lookup_cache then return price_lookup_cache end
     local map = {}
     if type(item_prices) == 'table' and type(item_prices.items) == 'table' then
@@ -576,6 +581,7 @@ local function log_craft_result(result_label)
         return
     end
 
+    ensure_history_loaded()
     last_craft.logged = true
     consume_pending_lost_items()
     local made_item_price = get_made_item_price(result_label)
@@ -655,6 +661,7 @@ local function reset_stats()
 end
 
 local function clear_history()
+    ensure_history_loaded()
     local entries = (type(craft_history) == 'table' and type(craft_history.entries) == 'table') and craft_history.entries or {}
     local cleared = #entries
     craft_history.entries = {}
@@ -769,6 +776,28 @@ end
 -- Only count the first 0x0030 per craft using a cooldown timer
 local last_craft_time = 0
 local craft_cooldown = 2.0 -- seconds, adjust as needed
+local pending_result_packet = nil
+
+local function process_pending_result_packet()
+    local pending = pending_result_packet
+    if not pending then return end
+    pending_result_packet = nil
+
+    local result = pending.result
+    local item_id = pending.item_id
+    local qty = pending.qty
+
+    if item_id ~= nil and item_id > 0 then
+        local item = AshitaCore:GetResourceManager():GetItemById(item_id)
+
+        last_craft.id = item_id or 0
+        last_craft.quantity = math.max(1, tonumber(qty) or 1)
+        last_craft.name = (item and item.Name and item.Name[1]) or ('Item #' .. tostring(item_id))
+    end
+
+    local result_label = handle_craft_result_006F(result, last_craft.name, last_craft.quantity, last_craft.hq_tier, last_craft.recipe, last_craft.result_label)
+    log_craft_result(result_label)
+end
 
 ashita.events.register('packet_in', 'craftstats_packet_in', function(e)
     if e.id == 0x0030 then
@@ -795,48 +824,11 @@ ashita.events.register('packet_in', 'craftstats_packet_in', function(e)
         local result = struct.unpack('b', e.data_modified, 0x04 + 0x01)
         local item_id = struct.unpack('H', e.data_modified, 0x08 + 0x01)
         local qty = struct.unpack('B', e.data_modified, 0x06 + 0x01)
-        if item_id ~= nil and item_id > 0 then
-            local item = AshitaCore:GetResourceManager():GetItemById(item_id)
-
-            last_craft.id = item_id or 0
-            last_craft.quantity = math.max(1, tonumber(qty) or 1)
-            last_craft.name = (item and item.Name and item.Name[1]) or ('Item #' .. tostring(item_id))
-            last_craft.recipe = nil
-            last_craft.hq_tier = nil
-
-            if last_craft.result_label == 'NQ' then
-                last_craft.recipe = find_recipe_by_output_name(last_craft.name, last_craft.quantity)
-            elseif is_hq_label(last_craft.result_label) then
-                local hq_recipe, hq_tier = find_recipe_by_hq_name(last_craft.name, last_craft.quantity)
-                last_craft.recipe = hq_recipe
-                last_craft.hq_tier = hq_tier
-            else
-                local hq_recipe, hq_tier = find_recipe_by_hq_name(last_craft.name, last_craft.quantity)
-                if hq_recipe ~= nil then
-                    last_craft.recipe = hq_recipe
-                    last_craft.hq_tier = hq_tier
-                else
-                    last_craft.recipe = find_recipe_by_output_name(last_craft.name, last_craft.quantity)
-                end
-            end
-
-            if last_craft.recipe == nil then
-                last_craft.recipe = find_recipe(item_id, last_craft.name)
-            end
-
-            -- Always prefer the ID-based recipe (actual crystal+ingredient IDs from the outgoing
-            -- 0x0096 packet) over name-based lookups, which can be ambiguous when multiple recipes
-            -- share the same output name (e.g. "Brass Ingot" exists at both level 9 and level 10).
-            if last_craft.crystal_id and last_craft.ingredient_ids then
-                local id_recipe = find_recipe_by_ids(last_craft.crystal_id, last_craft.ingredient_ids)
-                if id_recipe ~= nil then
-                    last_craft.recipe = id_recipe
-                end
-            end
-        end
-
-        local result_label = handle_craft_result_006F(result, last_craft.name, last_craft.quantity, last_craft.hq_tier, last_craft.recipe, last_craft.result_label)
-        log_craft_result(result_label)
+        pending_result_packet = {
+            result = result,
+            item_id = item_id,
+            qty = qty,
+        }
     end
 end)
 
@@ -873,11 +865,6 @@ ashita.events.register('packet_out', 'craftstats_packet_out', function(e)
         last_craft.crystal_id = crystal_le
         last_craft.ingredient_ids = itemnos_le
         last_craft.logged = false
-
-        -- Attempt to resolve recipe now so it will be available even on break
-        if (last_craft.recipe == nil or last_craft.recipe == false) and last_craft.crystal_id and last_craft.ingredient_ids then
-            last_craft.recipe = find_recipe_by_ids(last_craft.crystal_id, last_craft.ingredient_ids)
-        end
     end
 end)
 
@@ -920,6 +907,7 @@ ashita.events.register('text_in', 'craftstats_text_in', function(e)
 end)
 
 local function flush_pending_break_entry()
+    ensure_history_loaded()
     local lost = consume_pending_lost_items()
     local entry = pending_break_entry
     entry.lost_items = lost
@@ -940,6 +928,7 @@ local ui_render_params = {
     bonus = bonus,
     last_craft = last_craft,
     item_prices = item_prices,
+    recipes = recipes,
     show_window = show_window,
     ui_text_scale = ui_text_scale,
     on_reset = reset_stats,
@@ -975,10 +964,9 @@ local ui_render_params = {
 -- Multi-phase deferred startup: each step runs on its own d3d_present frame so no single
 -- frame blocks the game long enough to be felt as a freeze.
 --   Frames 1-8: load one recipe sub-module per frame (mutate recipes.by_name in place)
---   Frame 9:  build recipe/crystal-name indices + load stats
---   Frame 10: load item prices (largest JSON decode)
---   Frame 11: load craft history
---   Frame 12+: prewarm one crystal ID bucket per frame
+--   Frame 9:  load stats
+--   Frame 10: preload history
+--   Frame 11: preload prices
 local recipe_submodule_queue = {
     'recipes.woodworking',
     'recipes.alchemy',
@@ -991,29 +979,10 @@ local recipe_submodule_queue = {
 }
 local recipe_load_index = 0   -- 0 = not started; advances to 8 when all loaded
 local init_step = 0           -- runs AFTER all recipe sub-modules are loaded
-local crystal_prewarm_queue = nil
-local crystal_prewarm_index = 0
-
-local function tick_crystal_prewarm()
-    -- Build the queue lazily after build_result_indices has populated crystal_name_originals.
-    if crystal_prewarm_queue == nil then
-        crystal_prewarm_queue = {}
-        if crystal_name_originals ~= nil then
-            for _, orig_name in pairs(crystal_name_originals) do
-                crystal_prewarm_queue[#crystal_prewarm_queue + 1] = orig_name
-            end
-        end
-    end
-    crystal_prewarm_index = crystal_prewarm_index + 1
-    local orig_name = crystal_prewarm_queue[crystal_prewarm_index]
-    if orig_name == nil then return end  -- all crystals prewarmed
-    local id = safe_get_item_id_by_name(orig_name)
-    if id then
-        ensure_crystal_bucket(id)
-    end
-end
 
 ashita.events.register('d3d_present', 'craftstats_present', function()
+    process_pending_result_packet()
+
     if recipe_load_index < #recipe_submodule_queue then
         -- Load one recipe sub-module per frame; merge entries into the shared recipes table.
         recipe_load_index = recipe_load_index + 1
@@ -1026,36 +995,30 @@ ashita.events.register('d3d_present', 'craftstats_present', function()
             end
         end)
     elseif init_step == 0 then
-        -- All recipe files loaded; build indices and load stats (both fast, pure Lua).
+        -- All recipe files loaded; load stats.
         init_step = 1
         pcall(function()
             local ls = stats_store.load()
             for k, v in pairs(ls) do stats[k] = v end
-            build_result_indices()
         end)
     elseif init_step == 1 then
-        -- Step 1: item prices JSON (1000+ items, potentially the slowest decode).
+        -- Preload craft history so first craft logging does not hitch.
         init_step = 2
-        pcall(function()
-            local lp = prices_store.load_or_import()
-            item_prices.items = lp.items or {}
-        end)
+        pcall(ensure_history_loaded)
     elseif init_step == 2 then
-        -- Step 2: craft history JSON.
+        -- Preload item prices so first profit/loss calculation does not hitch.
         init_step = 3
-        pcall(function()
-            local lh = history_store.load()
-            craft_history.entries = lh.entries or {}
-        end)
-    elseif crystal_prewarm_queue == nil or crystal_prewarm_index < #crystal_prewarm_queue then
-        -- Step 3+: prewarm one crystal bucket per frame until done.
-        pcall(tick_crystal_prewarm)
+        pcall(ensure_prices_loaded)
     end
     if pending_break_entry and os.clock() >= pending_break_deadline then
         flush_pending_break_entry()
     end
     if show_window[1] and last_activity_time > 0 and (os.clock() - last_activity_time) > 300 then
         show_window[1] = false
+    end
+    if show_window[1] then
+        pcall(ensure_prices_loaded)
+        pcall(ensure_history_loaded)
     end
     ui.render(ui_render_params)
 end)

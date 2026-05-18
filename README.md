@@ -24,6 +24,11 @@ An Ashita v4 addon for tracking crafting outcomes, crafting history, and basic c
   - Moghancement
   - Gear
 
+- Recipes book
+  - Recipes per skill and level range
+  - List the ingredients needed
+  - Show how many ingredients are in inventory
+
 ## Commands
 - `/craftstats` - Toggle the window.
 - `/craftstats reset` - Reset current session stats.
