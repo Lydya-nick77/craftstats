@@ -4,7 +4,7 @@
 -- Horizonxi Approved ticket general-contact-1987
 addon.name    = 'craftstats'
 addon.author  = 'Lydya'
-addon.version = '0.8.1'
+addon.version = '0.8.2'
 addon.desc    = 'Tracks crafting statistics (success, break, HQ, NQ) and displays counts and percentages.'
 
 
@@ -180,6 +180,8 @@ local crystal_name_to_recipes = nil
 local crystal_name_originals = nil
 local crystal_recipe_index = nil
 local crystal_index_built_for = nil
+local recipes_revision = 0
+local recipe_indices_revision = -1
 
 local function build_result_indices()
     recipe_output_index = {}
@@ -219,16 +221,21 @@ local function build_result_indices()
             end
         end
     end
+    recipe_indices_revision = recipes_revision
+    -- Crystal buckets depend on crystal_name_to_recipes; reset when indices are rebuilt.
+    crystal_recipe_index = {}
+    crystal_index_built_for = {}
 end
 
 local function ensure_result_indices()
-    if recipe_output_index == nil or recipe_hq_index == nil then
+    if recipe_output_index == nil or recipe_hq_index == nil or recipe_indices_revision ~= recipes_revision then
         build_result_indices()
     end
 end
 
 local function ensure_crystal_bucket(crystal_id)
     if type(crystal_id) ~= 'number' then return end
+    ensure_result_indices()
     if crystal_recipe_index == nil then crystal_recipe_index = {} end
     if crystal_index_built_for == nil then crystal_index_built_for = {} end
     if crystal_index_built_for[crystal_id] then return end
@@ -793,6 +800,23 @@ local function process_pending_result_packet()
         last_craft.id = item_id or 0
         last_craft.quantity = math.max(1, tonumber(qty) or 1)
         last_craft.name = (item and item.Name and item.Name[1]) or ('Item #' .. tostring(item_id))
+
+        -- Fallback resolution by produced item when crystal/ingredient lookup is unavailable
+        -- or packet offsets differ; keeps history tied to the current craft attempt.
+        if last_craft.recipe == nil then
+            local rq = math.max(1, tonumber(last_craft.quantity) or 1)
+            local by_output = find_recipe_by_output_name(last_craft.name, rq)
+            if by_output then
+                last_craft.recipe = by_output
+                last_craft.hq_tier = 'NQ'
+            else
+                local by_hq, tier = find_recipe_by_hq_name(last_craft.name, rq)
+                if by_hq then
+                    last_craft.recipe = by_hq
+                    last_craft.hq_tier = tier
+                end
+            end
+        end
     end
 
     local result_label = handle_craft_result_006F(result, last_craft.name, last_craft.quantity, last_craft.hq_tier, last_craft.recipe, last_craft.result_label)
@@ -864,6 +888,13 @@ ashita.events.register('packet_out', 'craftstats_packet_out', function(e)
 
         last_craft.crystal_id = crystal_le
         last_craft.ingredient_ids = itemnos_le
+        -- Start a fresh craft context; result packets will populate these fields.
+        last_craft.id = 0
+        last_craft.name = 'N/A'
+        last_craft.quantity = 0
+        last_craft.recipe = nil
+        last_craft.hq_tier = nil
+        last_craft.result_label = nil
         last_craft.logged = false
     end
 end)
@@ -992,6 +1023,7 @@ ashita.events.register('d3d_present', 'craftstats_present', function()
                 for k, v in pairs(sub.by_name) do
                     recipes.by_name[k] = v
                 end
+                recipes_revision = recipes_revision + 1
             end
         end)
     elseif init_step == 0 then
