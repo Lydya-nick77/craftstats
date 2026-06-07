@@ -4,7 +4,7 @@
 -- Horizonxi Approved ticket general-contact-1987
 addon.name    = 'craftstats'
 addon.author  = 'Lydya'
-addon.version = '0.8.2'
+addon.version = '0.8.5'
 addon.desc    = 'Tracks crafting statistics (success, break, HQ, NQ) and displays counts and percentages.'
 
 
@@ -42,6 +42,7 @@ local create_bonus_tracker = load_local_module('bonus_tracker')
 local create_stats_store = load_local_module('stats_store')
 local create_prices_store = load_local_module('prices_store')
 local create_craft_history_store = load_local_module('craft_history_store')
+local create_settings_store = load_local_module('settings_store')
 local ui = load_local_module('ui\\ui')
 local item_resources = load_local_module('item_resources')
 
@@ -49,6 +50,7 @@ local bonus = create_bonus_tracker()
 local stats_store = create_stats_store(addon, json)
 local prices_store = create_prices_store(addon, json, recipes)
 local history_store = create_craft_history_store(addon, json)
+local settings_store = create_settings_store(addon, json)
 
 local last_craft = {
     id = 0,
@@ -680,6 +682,128 @@ end
 local show_window = { false }
 local last_activity_time = 0
 local ui_text_scale = 0.92
+local ui_text_scale_override = nil
+local ui_settings_loaded = false
+
+local function save_ui_settings()
+    settings_store.save({
+        ui_scale_auto = (ui_text_scale_override == nil),
+        ui_text_scale_override = ui_text_scale_override,
+    })
+end
+
+local function clamp_ui_scale(scale)
+    local value = tonumber(scale)
+    if not value then
+        return nil
+    end
+    if value < 0.75 then
+        value = 0.75
+    elseif value > 2.25 then
+        value = 2.25
+    end
+    return value
+end
+
+local function get_display_width()
+    local ok, io = pcall(imgui.GetIO)
+    if not ok or not io then
+        return nil
+    end
+
+    local size = io.DisplaySize
+    if type(size) == 'table' then
+        return tonumber(size.x) or tonumber(size[1])
+    end
+
+    return nil
+end
+
+local function get_auto_ui_scale()
+    local width = get_display_width()
+    if not width then
+        return 0.92
+    end
+    if width >= 3840 then
+        return 1.60
+    end
+    if width >= 3200 then
+        return 1.40
+    end
+    if width >= 2560 then
+        return 1.18
+    end
+    return 0.92
+end
+
+local function update_ui_scale()
+    local next_scale = ui_text_scale_override or get_auto_ui_scale()
+    ui_text_scale = clamp_ui_scale(next_scale) or ui_text_scale
+end
+
+local function try_load_ui_settings()
+    if ui_settings_loaded then
+        return
+    end
+
+    local loaded = nil
+    pcall(function()
+        loaded = settings_store.load()
+    end)
+
+    if type(loaded) ~= 'table' then
+        return
+    end
+
+    ui_settings_loaded = true
+    local is_auto = loaded.ui_scale_auto
+    local override = clamp_ui_scale(loaded.ui_text_scale_override)
+
+    if is_auto == true then
+        ui_text_scale_override = nil
+    elseif is_auto == false then
+        ui_text_scale_override = override
+    else
+        -- Backward compatibility for old data that only stored override.
+        ui_text_scale_override = override
+    end
+
+    update_ui_scale()
+end
+
+local function set_ui_scale(scale)
+    local next_scale = clamp_ui_scale(scale)
+    if not next_scale then
+        return false
+    end
+    ui_settings_loaded = true
+    ui_text_scale_override = next_scale
+    update_ui_scale()
+    save_ui_settings()
+    return true
+end
+
+local function step_ui_scale(delta)
+    local base = tonumber(ui_text_scale) or 1.0
+    return set_ui_scale(base + (tonumber(delta) or 0))
+end
+
+local function set_ui_scale_auto()
+    ui_settings_loaded = true
+    ui_text_scale_override = nil
+    update_ui_scale()
+    save_ui_settings()
+end
+
+local function is_ui_scale_auto()
+    return ui_text_scale_override == nil
+end
+
+local function get_ui_scale()
+    return ui_text_scale
+end
+
+update_ui_scale()
 
 -- Reset stats and toggle command
 ashita.events.register('command', 'craftstats_command', function(e)
@@ -687,6 +811,30 @@ ashita.events.register('command', 'craftstats_command', function(e)
     if args[1] == '/craftstats' then
         if args[2] == 'reset' then
             reset_stats()
+            return true
+        end
+        if args[2] == 'scale' then
+            local raw = args[3]
+            if raw == nil or raw == '' then
+                return true
+            end
+            if raw == 'auto' then
+                set_ui_scale_auto()
+                return true
+            end
+
+            local next_scale = nil
+            if raw == '+' then
+                next_scale = clamp_ui_scale(ui_text_scale + 0.10)
+            elseif raw == '-' then
+                next_scale = clamp_ui_scale(ui_text_scale - 0.10)
+            else
+                next_scale = clamp_ui_scale(tonumber(raw))
+            end
+
+            if next_scale ~= nil then
+                set_ui_scale(next_scale)
+            end
             return true
         end
         if args[2] == nil or args[2] == '' then
@@ -890,9 +1038,15 @@ ashita.events.register('packet_out', 'craftstats_packet_out', function(e)
         last_craft.ingredient_ids = itemnos_le
         -- Start a fresh craft context; result packets will populate these fields.
         last_craft.id = 0
-        last_craft.name = 'N/A'
+        local recipe_guess = find_recipe_by_ids(last_craft.crystal_id, last_craft.ingredient_ids)
+        if type(recipe_guess) == 'table' then
+            last_craft.recipe = recipe_guess
+            last_craft.name = tostring(recipe_guess.name or 'N/A')
+        else
+            last_craft.recipe = nil
+            last_craft.name = 'N/A'
+        end
         last_craft.quantity = 0
-        last_craft.recipe = nil
         last_craft.hq_tier = nil
         last_craft.result_label = nil
         last_craft.logged = false
@@ -962,6 +1116,12 @@ local ui_render_params = {
     recipes = recipes,
     show_window = show_window,
     ui_text_scale = ui_text_scale,
+    get_ui_scale = get_ui_scale,
+    get_auto_ui_scale = get_auto_ui_scale,
+    is_ui_scale_auto = is_ui_scale_auto,
+    set_ui_scale = set_ui_scale,
+    set_ui_scale_auto = set_ui_scale_auto,
+    step_ui_scale = step_ui_scale,
     on_reset = reset_stats,
     on_prices_save = function()
         price_lookup_cache = nil
@@ -1008,25 +1168,84 @@ local recipe_submodule_queue = {
     'recipes.leathercraft',
     'recipes.smithing',
 }
+
+local function load_recipe_submodule(name)
+    local ok, sub = pcall(require, name)
+    if ok and type(sub) == 'table' and type(sub.by_name) == 'table' then
+        return sub
+    end
+
+    if addon and type(addon.path) == 'string' and #addon.path > 0 then
+        local file_name = tostring(name):gsub('^recipes%.', '')
+        local path = string.format('%s\\recipes\\%s.lua', addon.path, file_name)
+        local ok2, sub2 = pcall(dofile, path)
+        if ok2 and type(sub2) == 'table' and type(sub2.by_name) == 'table' then
+            return sub2
+        end
+    end
+
+    return nil
+end
+
+local function count_loaded_recipes()
+    local n = 0
+    for _ in pairs(recipes.by_name or {}) do
+        n = n + 1
+    end
+    return n
+end
+
+local recipe_full_fallback_attempted = false
+
+local function try_merge_full_recipe_index()
+    if recipe_full_fallback_attempted then
+        return
+    end
+
+    recipe_full_fallback_attempted = true
+    local merged_any = false
+
+    pcall(function()
+        local loaded = load_local_module('recipes')
+        if type(loaded) == 'table' and type(loaded.by_name) == 'table' then
+            for k, v in pairs(loaded.by_name) do
+                recipes.by_name[tostring(k):lower()] = v
+                merged_any = true
+            end
+        end
+    end)
+
+    if merged_any then
+        recipes_revision = recipes_revision + 1
+    end
+end
+
 local recipe_load_index = 0   -- 0 = not started; advances to 8 when all loaded
 local init_step = 0           -- runs AFTER all recipe sub-modules are loaded
 
 ashita.events.register('d3d_present', 'craftstats_present', function()
     process_pending_result_packet()
+    try_load_ui_settings()
+    update_ui_scale()
 
     if recipe_load_index < #recipe_submodule_queue then
         -- Load one recipe sub-module per frame; merge entries into the shared recipes table.
         recipe_load_index = recipe_load_index + 1
         pcall(function()
-            local sub = require(recipe_submodule_queue[recipe_load_index])
+            local sub = load_recipe_submodule(recipe_submodule_queue[recipe_load_index])
             if type(sub) == 'table' and type(sub.by_name) == 'table' then
                 for k, v in pairs(sub.by_name) do
-                    recipes.by_name[k] = v
+                    recipes.by_name[tostring(k):lower()] = v
                 end
                 recipes_revision = recipes_revision + 1
             end
         end)
     elseif init_step == 0 then
+        if count_loaded_recipes() == 0 then
+            -- Ashita 4.3 fallback: if deferred submodule loading failed silently,
+            -- attempt one full-index merge before proceeding.
+            try_merge_full_recipe_index()
+        end
         -- All recipe files loaded; load stats.
         init_step = 1
         pcall(function()
@@ -1052,6 +1271,7 @@ ashita.events.register('d3d_present', 'craftstats_present', function()
         pcall(ensure_prices_loaded)
         pcall(ensure_history_loaded)
     end
+    ui_render_params.ui_text_scale = ui_text_scale
     ui.render(ui_render_params)
 end)
 

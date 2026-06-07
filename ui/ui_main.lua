@@ -68,6 +68,7 @@ function M.render(params)
     local toggle_prices  = false
     local toggle_history = false
     local toggle_recipes = false
+    local toggle_options = false
     local pushed_style_colors = 0
     local pushed_style_vars = 0
 
@@ -160,6 +161,18 @@ function M.render(params)
             on_reset()
         end
         imgui.SameLine()
+        if button_with_font(imgui, fonts, 'New Session') then
+            if type(on_new_session) == 'function' then
+                on_new_session()
+            else
+                on_reset()
+            end
+        end
+        imgui.SameLine()
+        if button_with_font(imgui, fonts, 'Options') then
+            toggle_options = true
+        end
+
         if button_with_font(imgui, fonts, 'Prices') then
             toggle_prices = true
         end
@@ -170,14 +183,6 @@ function M.render(params)
         imgui.SameLine()
         if button_with_font(imgui, fonts, 'Recipes') then
             toggle_recipes = true
-        end
-        imgui.SameLine()
-        if button_with_font(imgui, fonts, 'New Session') then
-            if type(on_new_session) == 'function' then
-                on_new_session()
-            else
-                on_reset()
-            end
         end
     end)
 
@@ -197,7 +202,7 @@ function M.render(params)
         end)
     end
 
-    return toggle_prices, toggle_history, toggle_recipes
+    return toggle_prices, toggle_history, toggle_recipes, toggle_options
 end
 
 return M

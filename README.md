@@ -32,6 +32,10 @@ An Ashita v4 addon for tracking crafting outcomes, crafting history, and basic c
 ## Commands
 - `/craftstats` - Toggle the window.
 - `/craftstats reset` - Reset current session stats.
+- `/craftstats scale <value>` - Set UI scale (range `0.75` to `2.25`). Example: `/craftstats scale 1.6`
+- `/craftstats scale +` - Increase UI scale by `0.10`.
+- `/craftstats scale -` - Decrease UI scale by `0.10`.
+- `/craftstats scale auto` - Use automatic resolution-based scaling (recommended for 4K).
 
 
 ## Installation
@@ -40,6 +44,7 @@ An Ashita v4 addon for tracking crafting outcomes, crafting history, and basic c
 
 ## Data Files
 - Stats, history, and prices are persisted as JSON in the addon data path.
+- UI scale options are persisted per character profile in `config/addons/craftstats/profiles/<Character>/settings.json`.
 
 ## Notes
 - This addon is developed against Ashita v4 and may need packet-offset adjustments for different server implementations. This addon is tested for HorizonXI.

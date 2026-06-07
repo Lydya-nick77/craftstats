@@ -302,6 +302,35 @@ local selected_skill_index  = 1
 local selected_rank_index   = 1
 local selected_recipe_index = 1
 local search_buffer         = { '' }
+local last_render_error      = ''
+
+local function safe_begin_child(imgui, id, size, border, flags)
+    local b = border == true
+    local f = tonumber(flags) or 0
+
+    local ok, ret = pcall(imgui.BeginChild, id, size, b, f)
+    if ok then return true, ret end
+
+    ok, ret = pcall(imgui.BeginChild, id, size, b)
+    if ok then return true, ret end
+
+    ok, ret = pcall(imgui.BeginChild, id, size)
+    if ok then return true, ret end
+
+    local w, h = 0, 0
+    if type(size) == 'table' then
+        w = tonumber(size.x) or tonumber(size[1]) or 0
+        h = tonumber(size.y) or tonumber(size[2]) or 0
+    end
+
+    ok, ret = pcall(imgui.BeginChild, id, w, h, b, f)
+    if ok then return true, ret end
+
+    ok, ret = pcall(imgui.BeginChild, id, w, h, b)
+    if ok then return true, ret end
+
+    return false, ret
+end
 
 -- Recipe filter cache: invalidated whenever the size of recipes.by_name changes
 -- (recipes are loaded lazily across frames).
@@ -309,6 +338,10 @@ local recipe_cache      = {}
 local recipe_cache_size = -1
 
 local function count_recipes(recipes)
+    if type(recipes) ~= 'table' then
+        return 0
+    end
+
     local n = 0
     for _ in pairs(recipes.by_name or {}) do n = n + 1 end
     return n
@@ -356,6 +389,10 @@ local function recipe_matches_search(recipe, query)
 end
 
 local function get_filtered_recipes(recipes, skill_name, rank)
+    if type(recipes) ~= 'table' then
+        return {}
+    end
+
     local cache_key    = skill_name .. ':' .. rank.min .. '-' .. rank.max
     local current_size = count_recipes(recipes)
     if recipe_cache_size ~= current_size then
@@ -573,8 +610,12 @@ function M.render(params)
     local fonts         = params.fonts
     local chrome        = params.chrome
     local recipes       = params.recipes
+    if type(recipes) ~= 'table' then
+        recipes = { by_name = {} }
+    end
     local ui_text_scale = params.ui_text_scale or 1.0
     local window_scale  = ui_text_scale * (14 / 18)
+    local recipe_count = count_recipes(recipes)
 
     -- Refresh inventory cache only when dirty (set by relevant packet events).
     update_inventory_cache()
@@ -585,7 +626,7 @@ function M.render(params)
 
     local open  = { true }
     local began = false
-    pcall(function()
+    local ok_render, render_err = xpcall(function()
         local window_flags = bit.bor(ImGuiWindowFlags_NoCollapse or 0, ImGuiWindowFlags_NoResize or 0)
         imgui.SetNextWindowSize({ 625, 645 }, ImGuiCond_Always)
         began = imgui.Begin('CraftStats - Recipes', open, window_flags)
@@ -594,7 +635,10 @@ function M.render(params)
         fonts.SetScale(window_scale)
 
         -- Top pane: dropdowns + search
-        imgui.BeginChild('cs_recipe_filters', { 0, 80 }, true)
+        local began_filters = false
+        local ok_filters = false
+        ok_filters, began_filters = safe_begin_child(imgui, 'cs_recipe_filters', { 0, 80 }, true, 0)
+        if ok_filters and began_filters ~= false then
             fonts.WithFont(18, function()
                 imgui.AlignTextToFramePadding()
                 imgui.Text('Craft:')
@@ -643,7 +687,10 @@ function M.render(params)
                 imgui.SetNextItemWidth(-1)
                 imgui.InputText('##cs_recipe_search', search_buffer, 128)
             end)
-        imgui.EndChild()
+            imgui.EndChild()
+        else
+            fonts.Label('Recipes UI compatibility mode: filter panel fallback active.')
+        end
 
         -- Bottom pane: split recipe list (left) + detail (right)
         local skill = CRAFT_SKILLS[selected_skill_index]
@@ -653,10 +700,16 @@ function M.render(params)
         local filtered    = {}
         local skill_lower = ''
         if skill and rank then
-            if count_recipes(recipes) == 0 then
-                imgui.BeginChild('cs_recipe_list_outer', { 0, 0 }, true)
+            if recipe_count == 0 then
+                local ok_empty, began_empty = safe_begin_child(imgui, 'cs_recipe_list_outer', { 0, 0 }, true, 0)
+                if ok_empty and began_empty ~= false then
                     fonts.Label('Recipes are still loading...')
-                imgui.EndChild()
+                    imgui.Text(string.format('Loaded recipes: %d', recipe_count))
+                    imgui.EndChild()
+                else
+                    fonts.Label('Recipes are still loading...')
+                    imgui.Text(string.format('Loaded recipes: %d', recipe_count))
+                end
             else
                 if query ~= '' then
                     -- Search across all recipes, ignore craft/rank filters
@@ -679,19 +732,42 @@ function M.render(params)
                     selected_recipe_index = math.max(1, #filtered)
                 end
 
-                imgui.BeginChild('cs_recipe_names', { 240, 0 }, true)
+                local ok_names, began_names = safe_begin_child(imgui, 'cs_recipe_names', { 240, 0 }, true, 0)
+                if ok_names and began_names ~= false then
                     render_recipe_name_list(imgui, fonts, filtered, skill_lower)
-                imgui.EndChild()
+                    imgui.EndChild()
+                else
+                    render_recipe_name_list(imgui, fonts, filtered, skill_lower)
+                end
 
                 imgui.SameLine()
 
-                imgui.BeginChild('cs_recipe_detail', { 0, 0 }, true)
-                    local selected_recipe = filtered[selected_recipe_index]
+                local ok_detail, began_detail = safe_begin_child(imgui, 'cs_recipe_detail', { 0, 0 }, true, 0)
+                local selected_recipe = filtered[selected_recipe_index]
+                if ok_detail and began_detail ~= false then
                     render_recipe_detail(imgui, fonts, selected_recipe, skill_lower)
-                imgui.EndChild()
+                    imgui.EndChild()
+                else
+                    render_recipe_detail(imgui, fonts, selected_recipe, skill_lower)
+                end
             end
         end
+    end, function(err)
+        return tostring(err)
     end)
+
+    if ok_render then
+        last_render_error = ''
+    else
+        last_render_error = tostring(render_err or 'unknown error')
+    end
+
+    if began and last_render_error ~= '' then
+        imgui.TextColored({ 1.0, 0.35, 0.35, 1.0 }, 'Recipe UI error:')
+        imgui.Text(last_render_error)
+        imgui.Separator()
+        imgui.Text(string.format('Loaded recipes: %d', recipe_count))
+    end
 
     if began then
         fonts.ResetScale()

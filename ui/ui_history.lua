@@ -154,6 +154,9 @@ local function render_history_editor(imgui, fonts, craft_history, on_history_cle
 
     if #entries == 0 then
         fonts.Label('No craft history yet.')
+        if table_style_colors > 0 then
+            imgui.PopStyleColor(table_style_colors)
+        end
         return
     end
 
